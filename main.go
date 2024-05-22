@@ -30,44 +30,17 @@ loop:
 	close(dataCh)
 }
 
-func recv(dataCh <-chan time.Time, collectorCh chan<- time.Duration) {
+func recv(dataCh <-chan time.Time) *welford.Stats {
+	stats := welford.New()
 	for sentAt := range dataCh {
-		collectorCh <- time.Since(sentAt)
+		stats.Add(float64(time.Since(sentAt).Microseconds()))
 	}
-	close(collectorCh)
+	return stats
 }
 
-func pair(ctx context.Context, n int) *welford.Stats {
-	collectorChs := make([]chan time.Duration, n)
-	for i := 0; i < n; i++ {
-		dataCh := make(chan time.Time, 1)
-		collectorChs[i] = make(chan time.Duration, 1)
-		go send(ctx, dataCh)
-		go recv(dataCh, collectorChs[i])
+func work() {
+	for {
 	}
-
-	stats := welford.New()
-	running := true
-	for running {
-		running = false
-		for i := 0; i < n; i++ {
-			ch := collectorChs[i]
-			if ch == nil {
-				continue
-			}
-
-			dur, ok := <-ch
-			if !ok {
-				collectorChs[i] = nil
-				continue
-			}
-
-			stats.Add(float64(dur.Microseconds()))
-			running = true
-		}
-	}
-
-	return stats
 }
 
 func main() {
@@ -79,6 +52,11 @@ func main() {
 	defer stop()
 
 	fmt.Println("running with ", runtime.NumCPU(), " cores")
-	stats := pair(ctx, runtime.NumCPU()-1)
+	dataCh := make(chan time.Time, 1)
+	for i := 0; i < runtime.NumCPU()-2; i++ {
+		go work()
+	}
+	go send(ctx, dataCh)
+	stats := recv(dataCh)
 	fmt.Printf("mean=%fus,stddev=%fus,min=%fus,max=%fus\n", stats.Mean(), stats.Stddev(), stats.Min(), stats.Max())
 }
